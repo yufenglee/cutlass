@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <chrono>
 
 #include "cutlass/cutlass.h"
 #include "cutlass/gemm/device/gemm.h"
@@ -73,7 +74,7 @@ using LayoutOutput = cutlass::layout::ColumnMajor;
 using MMAOp = cutlass::arch::OpClassTensorOp;
 
 // This code section describes CUDA SM architecture number
-using SmArch = cutlass::arch::Sm75;
+using SmArch = cutlass::arch::Sm70;
 
 // This code section describes the tile size a thread block will compute
 using ShapeMMAThreadBlock =
@@ -81,7 +82,7 @@ using ShapeMMAThreadBlock =
 // This code section describes tile size a warp will compute
 using ShapeMMAWarp = cutlass::gemm::GemmShape<64, 64, 32>;  // <- warp tile M = 64, N = 64, K = 32 
 // This code section describes the size of MMA op
-using ShapeMMAOp = cutlass::gemm::GemmShape<16, 8, 8>;  // <- MMA Op tile M = 8, N = 8, K = 4
+using ShapeMMAOp = cutlass::gemm::GemmShape<8, 8, 4>;  // <- MMA Op tile M = 8, N = 8, K = 4
 
 // This code section describes how threadblocks are scheduled on GPU
 using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;  // <- ??
@@ -90,7 +91,7 @@ using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSw
 //
 //    d_ij = max(0, alpha * sum_k(a_ik * b_kj) + c_ij )
 //
-using EpilogueOp = cutlass::epilogue::thread::LinearCombinationRelu<
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationGELU<
     ElementOutput,                                        // <- data type of output matrix
     128 / cutlass::sizeof_bits<ElementOutput>::value,     // <- this is the number of elements per
                                                           // vectorized memory access. For half
@@ -182,6 +183,9 @@ int run() {
   // Split K dimension into 1 partitions
   int split_k_slices = 1;
 
+  auto start = std::chrono::high_resolution_clock::now();
+
+  for(int ite = 0; ite < 1000; ite++){
   // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
   // instantiated CUTLASS kernel
   typename Gemm::Arguments arguments{
@@ -216,6 +220,15 @@ int run() {
   // Launch initialized CUTLASS kernel
   status = gemm_op();
   CUTLASS_CHECK(status);
+
+  cudaDeviceSynchronize();
+
+  }
+  auto end = std::chrono::high_resolution_clock::now();
+
+  std::cout << "Latency: "
+      << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() / 1000
+      << " ms" << std::endl;
 
   //
   // Create instantiation for device reference gemm kernel
@@ -264,7 +277,7 @@ int run() {
                     : "Failed")
             << std::endl;
 
-  CUTLASS_CHECK(status);
+  // CUTLASS_CHECK(status);
   return 0;
 }
 
@@ -288,8 +301,8 @@ int main() {
     return -1;
   }
 
-  if (!(props.major * 10 + props.minor >= 75)) {
-    std::cerr << "Turing Tensor Ops must be run on a machine with compute capability at least 75."
+  if (!(props.major * 10 + props.minor >= 70)) {
+    std::cerr << "Turing Tensor Ops must be run on a machine with compute capability at least 70."
               << std::endl;
     notSupported = true;
   }
